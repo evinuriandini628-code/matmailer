@@ -1,0 +1,13 @@
+{
+  "name": "matmailer",
+  "version": "1.0.0",
+  "description": "MatMailer Cloudflare Workers API",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
