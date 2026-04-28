@@ -2,7 +2,7 @@ name: 🚀 Deploy MatMailer to Cloudflare
 
 on:
   push:
-    branches: [ main ] # Pastikan branch kamu 'main'
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -15,8 +15,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DB_NAME: 'matmailer_db'
       R2_BUCKET_NAME: 'matmailer-eml'
-      MAIL_DOMAIN: ${{ vars.MAIL_DOMAIN || 'ahmats.store' }}
-      JWT_TOKEN: ${{ secrets.JWT_TOKEN }}
+      KV_NAME: 'KV'
 
     steps:
       - name: 🚚 Checkout repository
@@ -33,37 +32,46 @@ jobs:
       - name: 📦 Install Wrangler
         run: npm install -g wrangler
 
-      - name: 🛠️ Generate wrangler config
+      - name: ⚡ Set up KV Namespace
         run: |
-          CONFIG_FILE="wrangler-deploy.toml"
-          cp wrangler.toml "$CONFIG_FILE"
-          sed -i "s/^[[:space:]]*database_name = .*/database_name = \"${D1_DB_NAME}\"/" "$CONFIG_FILE"
-          sed -i "s/^[[:space:]]*bucket_name = .*/bucket_name = \"${R2_BUCKET_NAME}\"/" "$CONFIG_FILE"
-          sed -i 's/^[[:space:]]*database_id = .*/database_id = "PLACEHOLDER_D1_ID"/' "$CONFIG_FILE"
+          KV_LIST=$(wrangler kv:namespace list --json)
+          if echo "$KV_LIST" | jq -e ".[] | select(.title == \"matmailer-$KV_NAME\")" > /dev/null 2>&1; then
+            KV_ID=$(echo "$KV_LIST" | jq -r ".[] | select(.title == \"matmailer-$KV_NAME\") | .id")
+          else
+            wrangler kv:namespace create "$KV_NAME"
+            KV_ID=$(wrangler kv:namespace list --json | jq -r ".[] | select(.title == \"matmailer-$KV_NAME\") | .id")
+          fi
+          echo "KV_ID=$KV_ID" >> $GITHUB_ENV
 
       - name: 🐬 Set up D1 database
         run: |
-          CONFIG_FILE="wrangler-deploy.toml"
           DB_LIST=$(wrangler d1 list --json)
-          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"${D1_DB_NAME}\")" > /dev/null 2>&1; then
-            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"${D1_DB_NAME}\") | .uuid")
+          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"$D1_DB_NAME\")" > /dev/null 2>&1; then
+            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"$D1_DB_NAME\") | .uuid")
           else
-            wrangler d1 create "${D1_DB_NAME}"
-            D1_ID=$(wrangler d1 list --json | jq -r ".[] | select(.name == \"${D1_DB_NAME}\") | .uuid")
+            wrangler d1 create "$D1_DB_NAME"
+            D1_ID=$(wrangler d1 list --json | jq -r ".[] | select(.name == \"$D1_DB_NAME\") | .uuid")
           fi
-          sed -i "s|PLACEHOLDER_D1_ID|$D1_ID|g" "$CONFIG_FILE"
+          echo "D1_ID=$D1_ID" >> $GITHUB_ENV
+
+      - name: 🛠️ Generate deployment wrangler config
+        run: |
+          CONFIG_FILE="wrangler-deploy.toml"
+          cp wrangler.toml "$CONFIG_FILE"
+          sed -i "/database_name = \"$D1_DB_NAME\"/a database_id = \"$D1_ID\"" "$CONFIG_FILE"
+          sed -i "/binding = \"KV\"/a id = \"$KV_ID\"" "$CONFIG_FILE"
 
       - name: 📦 Set up R2 bucket
         run: |
           BUCKET_LIST=$(wrangler r2 bucket list 2>&1)
-          if ! echo "$BUCKET_LIST" | grep -q "${R2_BUCKET_NAME}"; then
-            wrangler r2 bucket create "${R2_BUCKET_NAME}"
+          if ! echo "$BUCKET_LIST" | grep -q "$R2_BUCKET_NAME"; then
+            wrangler r2 bucket create "$R2_BUCKET_NAME"
           fi
 
       - name: 🗄️ Initialize D1 database tables
         run: |
           if [ -f "d1-init.sql" ]; then
-            wrangler d1 execute "${D1_DB_NAME}" -c wrangler-deploy.toml --file=d1-init.sql --remote --yes
+            wrangler d1 execute "$D1_DB_NAME" -c wrangler-deploy.toml --file=d1-init.sql --remote --yes
           fi
 
       - name: 🚀 Start deployment
