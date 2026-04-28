@@ -1,4 +1,4 @@
-name: 🚀 Deploy MatMailer (Full Auto)
+name: 🚀 Deploy MatMailer (Wrangler v4 Fix)
 
 on:
   push:
@@ -27,28 +27,31 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          # 1. Bikin Resource (Abaikan kalau sudah ada)
+          # 1. Bikin Resource (Abaikan error kalau sudah ada)
           wrangler d1 create matmailer_db || true
           wrangler kv namespace create KV || true
           wrangler r2 bucket create matmailer-eml || true
 
-          # 2. Ambil ID pakai cara paling aman (sedikit regex biar gak error --json)
-          D1_ID=$(wrangler d1 list --json | jq -r '.[] | select(.name=="matmailer_db") | .uuid')
-          KV_ID=$(wrangler kv namespace list --json | jq -r '.[] | select(.title | contains("KV")) | .id')
+          # 2. Ambil ID D1 dari Tabel (Tanpa --json)
+          # Mencari baris matmailer_db, lalu ambil kolom ID (biasanya kolom ke-2 di tabel wrangler)
+          D1_ID=$(wrangler d1 list | grep "matmailer_db" | awk -F'│' '{print $3}' | xargs)
+          
+          # 3. Ambil ID KV dari Tabel
+          KV_ID=$(wrangler kv namespace list | grep "KV" | awk -F'│' '{print $3}' | xargs)
 
-          # 3. Patch wrangler.toml (Trik Freemail)
-          # Mengganti PLACEHOLDER di wrangler.toml dengan ID asli secara permanen sebelum deploy
+          # 4. Patch wrangler.toml (Timpa PLACEHOLDER)
           sed -i "s/PLACEHOLDER_D1_ID/$D1_ID/g" wrangler.toml
           sed -i "s/PLACEHOLDER_KV_ID/$KV_ID/g" wrangler.toml
           
-          echo "✅ Database ID: $D1_ID"
-          echo "✅ KV ID: $KV_ID"
+          echo "✅ D1 ID Detected: $D1_ID"
+          echo "✅ KV ID Detected: $KV_ID"
 
       - name: 🗄️ Run SQL Migration
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          # Perintah execute langsung di ROOT folder
           if [ -f "d1-init.sql" ]; then
             wrangler d1 execute matmailer_db --file=d1-init.sql --remote --yes
           fi
