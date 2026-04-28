@@ -1,0 +1,23 @@
+name = "matmailer"
+main = "src/index.js"
+compatibility_date = "2024-04-28"
+
+# Konfigurasi Domain (Ganti jika perlu)
+[vars]
+MAIL_DOMAIN = "ahmats.store"
+
+# 1. Database D1 untuk simpan pesan & share links
+[[d1_databases]]
+binding = "DB"
+database_name = "matmailer_db"
+database_id = "" # Biarkan kosong, akan diisi otomatis oleh script deploy
+
+# 2. R2 untuk simpan file email asli (EML)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "matmailer-eml"
+
+# 3. KV untuk Sesi Guest (Expiry 5 menit)
+[[kv_namespaces]]
+binding = "KV"
+id = "" # Biarkan kosong juga
