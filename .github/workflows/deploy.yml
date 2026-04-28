@@ -2,27 +2,70 @@ name: 🚀 Deploy MatMailer to Cloudflare
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ] # Pastikan branch kamu 'main'
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  Deploy-MatMailer:
+    name: 🏗️ Build and Deploy
     runs-on: ubuntu-latest
+
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DB_NAME: 'matmailer_db'
+      R2_BUCKET_NAME: 'matmailer-eml'
+      MAIL_DOMAIN: ${{ vars.MAIL_DOMAIN || 'ahmats.store' }}
+      JWT_TOKEN: ${{ secrets.JWT_TOKEN }}
+
     steps:
-      - name: Checkout Code
+      - name: 🚚 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: ⚙️ Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
+          cache: "npm"
 
-      - name: Install Dependencies
+      - name: 📦 Install dependencies
         run: npm install
 
-      - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+      - name: 📦 Install Wrangler
+        run: npm install -g wrangler
+
+      - name: 🛠️ Generate wrangler config
+        run: |
+          CONFIG_FILE="wrangler-deploy.toml"
+          cp wrangler.toml "$CONFIG_FILE"
+          sed -i "s/^[[:space:]]*database_name = .*/database_name = \"${D1_DB_NAME}\"/" "$CONFIG_FILE"
+          sed -i "s/^[[:space:]]*bucket_name = .*/bucket_name = \"${R2_BUCKET_NAME}\"/" "$CONFIG_FILE"
+          sed -i 's/^[[:space:]]*database_id = .*/database_id = "PLACEHOLDER_D1_ID"/' "$CONFIG_FILE"
+
+      - name: 🐬 Set up D1 database
+        run: |
+          CONFIG_FILE="wrangler-deploy.toml"
+          DB_LIST=$(wrangler d1 list --json)
+          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"${D1_DB_NAME}\")" > /dev/null 2>&1; then
+            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"${D1_DB_NAME}\") | .uuid")
+          else
+            wrangler d1 create "${D1_DB_NAME}"
+            D1_ID=$(wrangler d1 list --json | jq -r ".[] | select(.name == \"${D1_DB_NAME}\") | .uuid")
+          fi
+          sed -i "s|PLACEHOLDER_D1_ID|$D1_ID|g" "$CONFIG_FILE"
+
+      - name: 📦 Set up R2 bucket
+        run: |
+          BUCKET_LIST=$(wrangler r2 bucket list 2>&1)
+          if ! echo "$BUCKET_LIST" | grep -q "${R2_BUCKET_NAME}"; then
+            wrangler r2 bucket create "${R2_BUCKET_NAME}"
+          fi
+
+      - name: 🗄️ Initialize D1 database tables
+        run: |
+          if [ -f "d1-init.sql" ]; then
+            wrangler d1 execute "${D1_DB_NAME}" -c wrangler-deploy.toml --file=d1-init.sql --remote --yes
+          fi
+
+      - name: 🚀 Start deployment
+        run: wrangler deploy -c wrangler-deploy.toml
