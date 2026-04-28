@@ -4,12 +4,11 @@ compatibility_date = "2024-04-28"
 
 [vars]
 MAIL_DOMAIN = "ahmats.store"
-ADMIN_NAME = "admin"
-SESSION_EXPIRE_DAYS = "365"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "matmailer_db"
+database_id = "PLACEHOLDER_D1_ID"
 
 [[r2_buckets]]
 binding = "BUCKET"
@@ -17,6 +16,7 @@ bucket_name = "matmailer-eml"
 
 [[kv_namespaces]]
 binding = "KV"
+id = "PLACEHOLDER_KV_ID"
 
 [assets]
 directory = "public"
