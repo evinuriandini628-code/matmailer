@@ -1,4 +1,4 @@
-name: 🚀 Deploy MatMailer (Wrangler v4 Fix)
+name: 🚀 Deploy MatMailer to Cloudflare
 
 on:
   push:
@@ -6,58 +6,97 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  Deploy-MatMailer:
+    name: 🏗️ Build and Deploy
     runs-on: ubuntu-latest
+
+    env:
+      # Nama Worker
+      NAME: ${{ secrets.NAME || vars.NAME || 'matmailer' }}
+      # Cloudflare Credentials
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # D1 Database
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
+      D1_DB_NAME: ${{ secrets.D1_DB_NAME || vars.D1_DB_NAME || 'matmailer_db' }}
+      # R2 Bucket
+      R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME || 'matmailer-eml' }}
+      # MatMailer Vars
+      MAIL_DOMAIN: ${{ secrets.MAIL_DOMAIN || vars.MAIL_DOMAIN || 'ahmats.store' }}
+      JWT_TOKEN: ${{ secrets.JWT_TOKEN }}
+      ADMIN_NAME: ${{ secrets.ADMIN_NAME || 'admin' }}
+
     steps:
-      - name: 🚚 Checkout
+      - name: 🚚 Checkout repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Node
+      - name: ⚙️ Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
+          cache: "npm"
 
-      - name: 📦 Install
+      - name: 📦 Install dependencies
+        run: npm install
+
+      - name: 📦 Install Wrangler
+        run: npm install -g wrangler
+
+      - name: 🛠️ Generate wrangler config
         run: |
-          npm install
-          npm install -g wrangler
+          echo "🛠️ Generating deployment wrangler config..."
+          CONFIG_FILE="wrangler-deploy.toml"
+          cp wrangler.toml "$CONFIG_FILE"
 
-      - name: 🛠️ Build Resources & Patch Config
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          # 1. Bikin Resource (Abaikan error kalau sudah ada)
-          wrangler d1 create matmailer_db || true
-          wrangler kv namespace create KV || true
-          wrangler r2 bucket create matmailer-eml || true
+          # Ganti Nama Worker
+          sed -i "s|^name = .*|name = \"${NAME}\"|" "$CONFIG_FILE"
 
-          # 2. Ambil ID D1 dari Tabel (Tanpa --json)
-          # Mencari baris matmailer_db, lalu ambil kolom ID (biasanya kolom ke-2 di tabel wrangler)
-          D1_ID=$(wrangler d1 list | grep "matmailer_db" | awk -F'│' '{print $3}' | xargs)
-          
-          # 3. Ambil ID KV dari Tabel
-          KV_ID=$(wrangler kv namespace list | grep "KV" | awk -F'│' '{print $3}' | xargs)
+          # Ganti database_id dan name
+          sed -i 's/^[[:space:]]*database_id = .*/database_id = "PLACEHOLDER_D1_ID"/' "$CONFIG_FILE"
+          sed -i "s/^[[:space:]]*database_name = .*/database_name = \"${D1_DB_NAME}\"/" "$CONFIG_FILE"
 
-          # 4. Patch wrangler.toml (Timpa PLACEHOLDER)
-          sed -i "s/PLACEHOLDER_D1_ID/$D1_ID/g" wrangler.toml
-          sed -i "s/PLACEHOLDER_KV_ID/$KV_ID/g" wrangler.toml
-          
-          echo "✅ D1 ID Detected: $D1_ID"
-          echo "✅ KV ID Detected: $KV_ID"
+          # Ganti R2 bucket
+          sed -i "s/^[[:space:]]*bucket_name = .*/bucket_name = \"${R2_BUCKET_NAME}\"/" "$CONFIG_FILE"
 
-      - name: 🗄️ Run SQL Migration
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          # Perintah execute langsung di ROOT folder
-          if [ -f "d1-init.sql" ]; then
-            wrangler d1 execute matmailer_db --file=d1-init.sql --remote --yes
+          # Suntik Vars MatMailer
+          if [ -n "$MAIL_DOMAIN" ]; then
+            sed -i "s|^MAIL_DOMAIN=.*|MAIL_DOMAIN=\"${MAIL_DOMAIN}\"|" "$CONFIG_FILE"
+          fi
+          if [ -n "$JWT_TOKEN" ]; then
+            sed -i "s|^JWT_TOKEN=.*|JWT_TOKEN=\"${JWT_TOKEN}\"|" "$CONFIG_FILE"
           fi
 
-      - name: 🚀 Start Deployment
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: wrangler deploy
+          echo "✅ Config generated."
+
+      - name: 🐬 Set up D1 database
+        run: |
+          CONFIG_FILE="wrangler-deploy.toml"
+          if [ -n "$D1_DATABASE_ID" ]; then
+            sed -i "s|PLACEHOLDER_D1_ID|${D1_DATABASE_ID}|g" "$CONFIG_FILE"
+            exit 0
+          fi
+
+          DB_LIST=$(wrangler d1 list --json)
+          if echo "$DB_LIST" | jq -e ".[] | select(.name == \"${D1_DB_NAME}\")" > /dev/null 2>&1; then
+            D1_ID=$(echo "$DB_LIST" | jq -r ".[] | select(.name == \"${D1_DB_NAME}\") | .uuid")
+          else
+            wrangler d1 create "${D1_DB_NAME}"
+            D1_ID=$(wrangler d1 list --json | jq -r ".[] | select(.name == \"${D1_DB_NAME}\") | .uuid")
+          fi
+          sed -i "s|PLACEHOLDER_D1_ID|$D1_ID|g" "$CONFIG_FILE"
+
+      - name: 📦 Set up R2 bucket
+        run: |
+          BUCKET_LIST=$(wrangler r2 bucket list 2>&1)
+          if ! echo "$BUCKET_LIST" | grep -q "${R2_BUCKET_NAME}"; then
+            wrangler r2 bucket create "${R2_BUCKET_NAME}"
+          fi
+
+      - name: 🗄️ Initialize D1 Tables
+        run: |
+          if [ -f "d1-init.sql" ]; then
+            wrangler d1 execute "${D1_DB_NAME}" -c wrangler-deploy.toml --file=d1-init.sql --remote --yes
+          fi
+
+      - name: 🚀 Deploy
+        run: wrangler deploy -c wrangler-deploy.toml
