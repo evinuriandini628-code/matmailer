@@ -3,12 +3,14 @@ main = "src/index.js"
 compatibility_date = "2024-04-28"
 
 [vars]
-MAIL_DOMAIN = "ahmats.store"
+MAIL_DOMAIN = ""
+JWT_TOKEN = ""
+ADMIN_NAME = "admin"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "matmailer_db"
-database_id = "PLACEHOLDER_D1_ID"
+database_id = ""
 
 [[r2_buckets]]
 binding = "BUCKET"
@@ -16,8 +18,4 @@ bucket_name = "matmailer-eml"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "PLACEHOLDER_KV_ID"
-
-[assets]
-directory = "public"
-binding = "ASSETS"
+id = ""
